@@ -73,7 +73,7 @@ func Session(ctx context.Context) *session.Session {
 		return val.(*session.Session)
 	}
 
-	return nil
+	return &session.Session{}
 }
 
 func WithSessionManager(ctx context.Context, manager *session.Manager) context.Context {

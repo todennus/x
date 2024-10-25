@@ -14,11 +14,27 @@ func Default[T any]() Enum[T] {
 
 func FromID[T any](id int) Enum[T] {
 	var t T
+	if _, ok := id2Enum[t]; !ok {
+		return Default[T]()
+	}
+
+	if _, ok := id2Enum[t][id]; !ok {
+		return Default[T]()
+	}
+
 	return id2Enum[t][id].(Enum[T])
 }
 
 func FromStr[T any](str string) Enum[T] {
 	var t T
+	if _, ok := str2Enum[t]; !ok {
+		return Default[T]()
+	}
+
+	if _, ok := str2Enum[t][str]; !ok {
+		return Default[T]()
+	}
+
 	return str2Enum[t][str].(Enum[T])
 }
 
