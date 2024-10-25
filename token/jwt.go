@@ -38,21 +38,15 @@ func (engine *JWTEngine) WithHMAC(secret string) error {
 }
 
 func (engine *JWTEngine) WithRSA(priv, pub string) error {
-	if priv == "" && pub == "" {
-		return fmt.Errorf("%w: require non-empty rsa private key or public key", ErrSigningKeyInvalid)
-	}
-
 	var err error
 	if priv != "" {
-		engine.rsaPrivateKey, err = jwt.ParseRSAPrivateKeyFromPEM([]byte(priv))
-		if err != nil {
+		if engine.rsaPrivateKey, err = jwt.ParseRSAPrivateKeyFromPEM([]byte(priv)); err != nil {
 			return err
 		}
 	}
 
 	if pub != "" {
-		engine.rsaPublicKey, err = jwt.ParseRSAPublicKeyFromPEM([]byte(pub))
-		if err != nil {
+		if engine.rsaPublicKey, err = jwt.ParseRSAPublicKeyFromPEM([]byte(pub)); err != nil {
 			return err
 		}
 	}
