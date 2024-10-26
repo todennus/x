@@ -52,11 +52,11 @@ type errorWrapperReplaceBy struct {
 	description string
 }
 
-func (b *errorWrapperReplaceBy) If(target error) *errorWrapper {
+func (b *errorWrapperReplaceBy) If(target ...error) *errorWrapper {
 	if b.description == "" {
-		return replaceBy(b.w, Enrich(b.code, b.w.err.Error()), target)
+		return replaceBy(b.w, Enrich(b.code, b.w.err.Error()), target...)
 	} else {
-		return replaceBy(b.w, Enrich(b.code, b.description).Hide(b.w.err, b.w.event, b.w.attributes...), target)
+		return replaceBy(b.w, Enrich(b.code, b.description).Hide(b.w.err, b.w.event, b.w.attributes...), target...)
 	}
 }
 
@@ -64,17 +64,20 @@ func (b *errorWrapperReplaceBy) Error() error {
 	return b.If(nil).Error()
 }
 
-func replaceBy(w *errorWrapper, err error, conditionErr error) *errorWrapper {
+func replaceBy(w *errorWrapper, err error, conditionErrs ...error) *errorWrapper {
 	if w.err == nil || w.final != nil {
 		return w
 	}
 
-	if conditionErr != nil && !Iss(conditionErr, w.config.goodErrors...) {
-		panic("condition error must be a good error")
-	}
+	for i := range conditionErrs {
+		if !Iss(conditionErrs[i], w.config.goodErrors...) {
+			panic("condition error must be a good error")
+		}
 
-	if conditionErr == nil || Is(w.err, conditionErr) {
-		w.final = err
+		if Is(w.err, conditionErrs[i]) {
+			w.final = err
+			break
+		}
 	}
 
 	return w
