@@ -9,5 +9,5 @@ type Claims interface {
 type Engine interface {
 	Type() string
 	Generate(ctx context.Context, inner Claims) (string, error)
-	Validate(ctx context.Context, token string, claims Claims) (bool, error)
+	Validate(ctx context.Context, token string, claims Claims) error
 }

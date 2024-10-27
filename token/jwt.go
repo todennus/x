@@ -69,22 +69,12 @@ func (engine *JWTEngine) Generate(ctx context.Context, claims Claims) (string, e
 	return token, err
 }
 
-func (engine *JWTEngine) Validate(ctx context.Context, token string, claims Claims) (bool, error) {
-	parsedToken, err := jwt.ParseWithClaims(token, claims, engine.publicKeyFunc)
-	if err != nil {
-		return false, err
+func (engine *JWTEngine) Validate(ctx context.Context, token string, claims Claims) error {
+	if _, err := jwt.ParseWithClaims(token, claims, engine.publicKeyFunc); err != nil {
+		return err
 	}
 
-	_, ok := parsedToken.Claims.(Claims)
-	if !ok {
-		return false, ErrTokenInvalidFormat
-	}
-
-	if !parsedToken.Valid {
-		return false, nil
-	}
-
-	return true, nil
+	return nil
 }
 
 func (engine *JWTEngine) publicKeyFunc(t *jwt.Token) (interface{}, error) {
