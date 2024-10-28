@@ -13,28 +13,31 @@ const (
 	scopeRelationshipSuperset
 )
 
+const (
+	optionalPrefix = "?"
+)
+
 type Scoper interface {
-	Contains(another Scoper) bool
-
-	String() string
-
 	IsUndefined() bool
-
 	IsOptional() bool
+	Contains(another Scoper) bool
+	String() string
 }
 
 var _ Scoper = Scope{}
 
 type Scope struct {
-	source   string
-	action   Actioner
-	resource Resourcer
-	optional bool
+	engine *Engine
+
+	title      string
+	isOptional bool
+	action     Actioner
+	resource   Resourcer
 }
 
-func New(source string, action Actioner, resource Resourcer) Scope {
+func newScope(engine *Engine, action Actioner, resource Resourcer) Scope {
 	return Scope{
-		source:   source,
+		engine:   engine,
 		action:   action,
 		resource: resource,
 	}
@@ -42,28 +45,58 @@ func New(source string, action Actioner, resource Resourcer) Scope {
 
 func (scope Scope) WithOptional(optional bool) Scope {
 	return Scope{
-		source:   scope.source,
-		action:   scope.action,
-		resource: scope.resource,
-		optional: optional,
+		engine:     scope.engine,
+		action:     scope.action,
+		resource:   scope.resource,
+		isOptional: optional,
+		title:      scope.title,
 	}
+}
+
+func (scope Scope) WithTitle(title string) Scope {
+	return Scope{
+		engine:     scope.engine,
+		action:     scope.action,
+		resource:   scope.resource,
+		isOptional: scope.isOptional,
+		title:      title,
+	}
+}
+
+func (scope Scope) AsScopes() Scopes {
+	return NewScopes(scope)
+}
+
+func (scope Scope) Title() string {
+	return scope.title
 }
 
 func (scope Scope) IsOptional() bool {
-	return scope.optional
+	return scope.isOptional
 }
 
+// String returns the scope as the format ?todennus/title:read:write
 func (scope Scope) String() string {
-	prefix := ""
-	if scope.IsOptional() {
-		prefix = "@"
+	s := ""
+	if scope.isOptional {
+		s += optionalPrefix
 	}
 
-	if scope.resource.String() == "" {
-		return fmt.Sprintf("%s[%s]%s", prefix, scope.source, scope.action.String())
+	if scope.engine.namespace != "" {
+		s += scope.engine.namespace + "/"
 	}
 
-	return fmt.Sprintf("%s[%s]%s:%s", prefix, scope.source, scope.action.String(), scope.resource.String())
+	if scope.title != "" && len(scope.engine.titles) > 0 && scope.title != scope.engine.titles[0] {
+		s += scope.title + ":"
+	}
+
+	s += scope.action.String()
+
+	if resource := scope.resource.String(); resource != "" {
+		s += ":" + resource
+	}
+
+	return s
 }
 
 func (scope Scope) Contains(another Scoper) bool {
@@ -72,11 +105,11 @@ func (scope Scope) Contains(another Scoper) bool {
 		return false
 	}
 
-	return anotherScope.action.IsSubset(scope.action) && anotherScope.resource.IsSubset(scope.resource)
-}
+	if scope.title != anotherScope.title {
+		return false
+	}
 
-func (scope Scope) AsScopes() Scopes {
-	return NewScopes(scope)
+	return anotherScope.action.IsSubset(scope.action) && anotherScope.resource.IsSubset(scope.resource)
 }
 
 func (scope Scope) IsUndefined() bool {
@@ -97,7 +130,7 @@ func NewUndefinedScope(value string) UndefinedScope {
 func (scope UndefinedScope) String() string {
 	prefix := ""
 	if scope.IsOptional() {
-		prefix = "@"
+		prefix = optionalPrefix
 	}
 
 	return fmt.Sprintf("%s%s", prefix, scope.value)

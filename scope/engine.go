@@ -6,61 +6,86 @@ import (
 )
 
 type Engine struct {
-	source      string
-	actionMap   map[string]Actioner
-	resourceMap map[string]Resourcer
+	namespace       string
+	namespacePrefix string
+	actionMap       map[string]Actioner
+	resourceMap     map[string]Resourcer
+	titles          []string
+	validScope      map[string]bool
 }
 
-func NewEngine(source string, actionMap map[string]Actioner, resourceMap map[string]Resourcer) Engine {
+func NewEngine(namespace string, actionMap map[string]Actioner, resourceMap map[string]Resourcer) Engine {
 	return Engine{
-		source:      source,
-		actionMap:   actionMap,
-		resourceMap: resourceMap,
+		namespace:       namespace,
+		namespacePrefix: fmt.Sprintf("%s/", namespace),
+		actionMap:       actionMap,
+		resourceMap:     resourceMap,
+		titles:          make([]string, 0),
+		validScope:      make(map[string]bool),
 	}
 }
 
-func (engine Engine) New(action Actioner, resource Resourcer) Scope {
-	return New(engine.source, action, resource)
+func (engine *Engine) DefineTitle(title string) {
+	engine.titles = append(engine.titles, title)
 }
 
-func (engine Engine) ParseScope(s string) Scoper {
+func (engine *Engine) New(action Actioner, resource Resourcer) Scope {
+	return newScope(engine, action, resource)
+}
+
+func (engine *Engine) ParseScope(s string) Scoper {
 	s = strings.Trim(s, " ")
 	if s == "" {
 		return nil
 	}
 
-	optional := false
-	if s[0] == '@' {
-		s = s[1:]
-		optional = true
+	isOptional := false
+	if strings.HasPrefix(s, optionalPrefix) {
+		isOptional = true
+		s = s[len(optionalPrefix):]
 	}
 
-	sourceStr := fmt.Sprintf("[%s]", engine.source)
-	if !strings.HasPrefix(s, sourceStr) {
-		return NewUndefinedScope(s).WithOptional(optional)
+	if !strings.HasPrefix(s, engine.namespacePrefix) {
+		return NewUndefinedScope(s).WithOptional(isOptional)
 	}
 
-	actionStr, resourceStr, found := strings.Cut(s[len(sourceStr):], ":")
+	s = s[len(engine.namespacePrefix):]
+
+	detectedTitle := ""
+	if len(engine.titles) > 0 {
+		detectedTitle = engine.titles[0]
+	}
+
+	for i := range engine.titles {
+		titlePrefix := fmt.Sprintf("%s:", engine.titles[i])
+		if strings.HasPrefix(s, titlePrefix) {
+			detectedTitle = engine.titles[i]
+			s = s[len(titlePrefix):]
+			break
+		}
+	}
+
+	actionStr, resourceStr, found := strings.Cut(s, ":")
 	if !found {
-		actionStr = s[len(sourceStr):]
+		actionStr = s
 		resourceStr = ""
 	}
 
 	action, ok := engine.actionMap[actionStr]
 	if !ok {
-		return NewUndefinedScope(s).WithOptional(optional)
+		return NewUndefinedScope(s).WithOptional(isOptional)
 	}
 
 	resource, ok := engine.resourceMap[resourceStr]
 	if !ok {
-		return NewUndefinedScope(s).WithOptional(optional)
+		return NewUndefinedScope(s).WithOptional(isOptional)
 	}
 
-	scope := New(engine.source, action, resource).WithOptional(optional)
+	scope := newScope(engine, action, resource).WithOptional(isOptional).WithTitle(detectedTitle)
 	return scope
 }
 
-func (engine Engine) ParseScopes(s string) Scopes {
+func (engine *Engine) ParseScopes(s string) Scopes {
 	s = strings.Trim(s, " ")
 	if s == "" {
 		return Scopes{}
@@ -75,4 +100,21 @@ func (engine Engine) ParseScopes(s string) Scopes {
 	}
 
 	return scopes
+}
+
+type validScopeDefiner struct {
+	engine *Engine
+	scope  Scope
+}
+
+func (engine *Engine) DefineScope(action Actioner, resource Resourcer) *validScopeDefiner {
+	return &validScopeDefiner{
+		engine: engine,
+		scope:  engine.New(action, resource),
+	}
+}
+
+func (d *validScopeDefiner) WithTitle(title string) *validScopeDefiner {
+	d.engine.validScope[d.scope.WithTitle(title).String()] = true
+	return d
 }

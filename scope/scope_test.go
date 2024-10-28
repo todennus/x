@@ -96,13 +96,13 @@ func Test_SerializeScope(t *testing.T) {
 		Engine.New(ActionSet.Write, ResourceAll.User.Avatar),
 	)
 
-	assert.Equal(t, "[x]read:user [x]write:user.avatar", scopes.String())
+	assert.Equal(t, "x/read:user x/write:user.avatar", scopes.String())
 	assert.Equal(t, "", scope.NewScopes().String())
 }
 
 func Test_Engine_ParseScope(t *testing.T) {
 	engine := scope.NewEngine("custom", actionMap, resourceMap)
-	scopes := engine.ParseScopes("[custom]read:user write:user.avatar")
+	scopes := engine.ParseScopes("custom/read:user write:user.avatar")
 
 	assert.True(t, scopes.Contains(engine.New(ActionSet.Read, ResourceAll.User)))
 	assert.True(t, scopes.Contains(engine.New(ActionSet.Read, ResourceAll.User.Email)))
@@ -124,7 +124,7 @@ func Test_Engine_ParseScopeEmpty(t *testing.T) {
 
 func Test_Engine_ParseScopeAll(t *testing.T) {
 	engine := scope.NewEngine("custom", actionMap, resourceMap)
-	scopes := engine.ParseScopes("[custom]*")
+	scopes := engine.ParseScopes("custom/*")
 
 	assert.True(t, scopes.Contains(engine.New(ActionSet.Read, ResourceAll.User)))
 	assert.True(t, scopes.Contains(engine.New(ActionSet.Read, ResourceAll.User.Email)))
@@ -150,21 +150,85 @@ func Test_ScopesNil(t *testing.T) {
 }
 
 func Test_Scopes_Lessthan(t *testing.T) {
-	parser := scope.NewEngine("z", actionMap, resourceMap)
+	engine := scope.NewEngine("z", actionMap, resourceMap)
 
-	scopes := parser.ParseScopes("create:client something")
+	scopes := engine.ParseScopes("create:client something")
 	assert.Equal(t, "create:client something", scopes.String())
-	assert.False(t, scopes.LessThanOrEqual(parser.ParseScopes("[z]*")))
+	assert.False(t, scopes.LessThanOrEqual(engine.ParseScopes("z/*")))
 
-	scopes = parser.ParseScopes("[z]create:client")
-	assert.Equal(t, "[z]create:client", scopes.String())
-	assert.True(t, scopes.LessThanOrEqual(parser.ParseScopes("[z]*")))
+	scopes = engine.ParseScopes("z/create:client")
+	assert.Equal(t, "z/create:client", scopes.String())
+	assert.True(t, scopes.LessThanOrEqual(engine.ParseScopes("z/*")))
 
-	scopeA := parser.ParseScopes("[z]read:client")
-	scopeB := parser.ParseScopes("[z]read:client [z]read:user")
+	scopeA := engine.ParseScopes("z/read:client")
+	scopeB := engine.ParseScopes("z/read:client z/read:user")
 	assert.True(t, scopeA.LessThanOrEqual(scopeB))
 
-	scopeA = parser.ParseScopes("[z]read:client")
-	scopeB = parser.ParseScopes("[z]read:client")
+	scopeA = engine.ParseScopes("z/read:client")
+	scopeB = engine.ParseScopes("z/read:client")
 	assert.False(t, !scopeA.LessThanOrEqual(scopeB))
+}
+
+func Test_Scopes_Optional(t *testing.T) {
+	engine := scope.NewEngine("z", actionMap, resourceMap)
+
+	scopes := engine.ParseScopes("?create:client something")
+	assert.True(t, scopes[0].IsOptional())
+	assert.False(t, scopes[1].IsOptional())
+}
+
+func Test_Scopes_Admin(t *testing.T) {
+	engine := scope.NewEngine("z", actionMap, resourceMap)
+	engine.DefineTitle("user")
+	engine.DefineTitle("admin")
+
+	sc := engine.ParseScope("z/admin:create:client")
+	zscope, ok := sc.(scope.Scope)
+	assert.True(t, ok)
+	assert.Equal(t, "admin", zscope.Title())
+
+	sc = engine.ParseScope("z/admin:create")
+	zscope, ok = sc.(scope.Scope)
+	assert.True(t, ok)
+	assert.Equal(t, "admin", zscope.Title())
+
+	sc = engine.ParseScope("z/admin:*")
+	zscope, ok = sc.(scope.Scope)
+	assert.True(t, ok)
+	assert.Equal(t, "admin", zscope.Title())
+
+	sc = engine.ParseScope("z/*")
+	zscope, ok = sc.(scope.Scope)
+	assert.True(t, ok)
+	assert.Equal(t, "user", zscope.Title())
+
+	sc = engine.ParseScope("z/admin:client")
+	_, ok = sc.(scope.Scope)
+	assert.False(t, ok)
+
+	sc = engine.ParseScope("z/admin:")
+	_, ok = sc.(scope.Scope)
+	assert.False(t, ok)
+
+	sc = engine.ParseScope("z/admin")
+	_, ok = sc.(scope.Scope)
+	assert.False(t, ok)
+}
+
+func Test_Scopes_FullContext(t *testing.T) {
+	engine := scope.NewEngine("z", actionMap, resourceMap)
+	engine.DefineTitle("user")
+	engine.DefineTitle("admin")
+
+	sc := engine.ParseScope("?z/admin:create:client")
+	zscope, ok := sc.(scope.Scope)
+	assert.True(t, ok)
+	assert.Equal(t, "admin", zscope.Title())
+	assert.True(t, zscope.IsOptional())
+
+	sc = engine.ParseScope("?z/create:client")
+	zscope, ok = sc.(scope.Scope)
+	assert.True(t, ok)
+	assert.Equal(t, "user", zscope.Title())
+	assert.True(t, zscope.IsOptional())
 }
