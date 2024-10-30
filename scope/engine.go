@@ -1,77 +1,77 @@
 package scope
 
 import (
-	"fmt"
 	"strings"
 )
 
 type Engine struct {
-	source      string
-	actionMap   map[string]Actioner
-	resourceMap map[string]Resourcer
+	valid map[string]Scoper
 }
 
-func NewEngine(source string, actionMap map[string]Actioner, resourceMap map[string]Resourcer) Engine {
-	return Engine{
-		source:      source,
-		actionMap:   actionMap,
-		resourceMap: resourceMap,
+func NewEngine() *Engine {
+	return &Engine{
+		valid: make(map[string]Scoper),
 	}
 }
 
-func (engine Engine) New(action Actioner, resource Resourcer) Scope {
-	return New(engine.source, action, resource)
+func Define[S Scoper](engine *Engine, scope S) S {
+	engine.valid[scope.Scope()] = scope
+	return scope
 }
 
-func (engine Engine) ParseScope(s string) Scoper {
+func (engine *Engine) ParseScope(s string) (Scoper, bool) {
+	if scope, ok := engine.valid[s]; ok {
+		return scope, true
+	}
+
+	return New(s), false
+}
+
+func (engine *Engine) ParseDefinedScopes(s string) Scopes {
 	s = strings.Trim(s, " ")
 	if s == "" {
 		return nil
 	}
 
-	optional := false
-	if s[0] == '@' {
-		s = s[1:]
-		optional = true
+	scopesStr := strings.Split(s, " ")
+	scopes := Scopes{}
+	for _, str := range scopesStr {
+		if scope, ok := engine.ParseScope(str); ok {
+			scopes = append(scopes, scope)
+		}
 	}
 
-	sourceStr := fmt.Sprintf("[%s]", engine.source)
-	if !strings.HasPrefix(s, sourceStr) {
-		return NewUndefinedScope(s).WithOptional(optional)
-	}
-
-	actionStr, resourceStr, found := strings.Cut(s[len(sourceStr):], ":")
-	if !found {
-		actionStr = s[len(sourceStr):]
-		resourceStr = ""
-	}
-
-	action, ok := engine.actionMap[actionStr]
-	if !ok {
-		return NewUndefinedScope(s).WithOptional(optional)
-	}
-
-	resource, ok := engine.resourceMap[resourceStr]
-	if !ok {
-		return NewUndefinedScope(s).WithOptional(optional)
-	}
-
-	scope := New(engine.source, action, resource).WithOptional(optional)
-	return scope
+	return scopes
 }
 
-func (engine Engine) ParseScopes(s string) Scopes {
+func (engine *Engine) ParseUndefinedScopes(s string) Scopes {
 	s = strings.Trim(s, " ")
 	if s == "" {
-		return Scopes{}
+		return nil
 	}
 
 	scopesStr := strings.Split(s, " ")
 	scopes := Scopes{}
 	for _, str := range scopesStr {
-		if s := engine.ParseScope(str); s != nil {
-			scopes = append(scopes, s)
+		if scope, ok := engine.ParseScope(str); !ok {
+			scopes = append(scopes, scope)
 		}
+	}
+
+	return scopes
+}
+
+func (engine *Engine) ParseAnyScopes(s string) Scopes {
+	s = strings.Trim(s, " ")
+	if s == "" {
+		return nil
+	}
+
+	scopesStr := strings.Split(s, " ")
+	scopes := Scopes{}
+	for _, str := range scopesStr {
+		scope, _ := engine.ParseScope(str)
+		scopes = append(scopes, scope)
 	}
 
 	return scopes

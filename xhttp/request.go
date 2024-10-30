@@ -31,7 +31,7 @@ func ParseHTTPRequest[T any](req *http.Request) (*T, error) {
 		return &t, nil
 
 	case http.MethodPost, http.MethodPut, http.MethodDelete:
-		contentType := req.Header.Get("content-type")
+		contentType := req.Header.Get("Content-Type")
 		switch contentType {
 		case ContentTypeApplicationJSON:
 			if err := parseJSONBody(&t, req); err != nil {
@@ -47,11 +47,11 @@ func ParseHTTPRequest[T any](req *http.Request) (*T, error) {
 			return &t, nil
 
 		default:
-			return nil, fmt.Errorf("%w%s", ErrHTTPBadRequest, fmt.Sprintf("not support content type %s", contentType))
+			return nil, fmt.Errorf("%wnot support content type %s", ErrHTTPBadRequest, contentType)
 		}
 
 	default:
-		return nil, fmt.Errorf("%w%s", ErrHTTPBadRequest, fmt.Sprintf("not support method %s", req.Method))
+		return nil, fmt.Errorf("%wnot support method %s", ErrHTTPBadRequest, req.Method)
 	}
 }
 
