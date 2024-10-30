@@ -3,10 +3,10 @@ package lock
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/todennus/x/xcontext"
 )
 
 var _ Locker = (*RedisLock)(nil)
@@ -45,6 +45,6 @@ func (l *RedisLock) Lock(ctx context.Context) error {
 func (l *RedisLock) Unlock(ctx context.Context) {
 	_, err := l.client.Del(ctx, l.key).Result()
 	if err != nil {
-		xcontext.Logger(ctx).Warn("failed-to-release-redis-lock", "key", l.key, "err", err)
+		slog.Warn("failed-to-release-redis-lock", "key", l.key, "err", err)
 	}
 }
