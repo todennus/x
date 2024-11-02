@@ -9,19 +9,22 @@ import (
 var _ io.Reader = (*HashReader)(nil)
 
 type HashReader struct {
-	inner  io.Reader
+	reader io.Reader
 	hasher hash.Hash
 }
 
+// NewHashReader returns a special Reader in which an inner hasher consumes the
+// data when the Read() method is called. Use the Sum() method to retrieve the
+// hash result.
 func NewHashReader(reader io.Reader, hasher hash.Hash) *HashReader {
 	return &HashReader{
-		inner:  reader,
+		reader: reader,
 		hasher: hasher,
 	}
 }
 
 func (r *HashReader) Read(p []byte) (int, error) {
-	n, err := r.inner.Read(p)
+	n, err := r.reader.Read(p)
 	if err != nil {
 		return n, err
 	}
@@ -38,6 +41,6 @@ func (r *HashReader) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (r *HashReader) Sum(p []byte) []byte {
-	return r.hasher.Sum(p)
+func (r *HashReader) Sum() []byte {
+	return r.hasher.Sum(nil)
 }
