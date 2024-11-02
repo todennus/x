@@ -72,8 +72,11 @@ func (err RichError) Hide(detail error, event string, attributes ...any) RichErr
 		panic("invalid key-value attributes")
 	}
 
-	err.core.event = event
-	err.core.detail = detail
-	err.core.attributes = attributes
-	return err
+	return RichError{core: &richErrorCore{
+		code:        err.core.code,
+		description: err.core.description,
+		detail:      detail,
+		event:       event,
+		attributes:  attributes,
+	}}
 }

@@ -2,28 +2,52 @@ package xhttp
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/todennus/x/mime"
 	"github.com/todennus/x/xreflect"
 )
 
-const (
-	ContentTypeApplicationJSON    = "application/json"
-	ContentTypeXWWWFormUrlEncoded = "application/x-www-form-urlencoded"
-)
+type FormDataRequest interface {
+	NumFiles() int
+}
+
+const maxBufferBytes = 512
+
+var bufferPool = sync.Pool{
+	New: func() any {
+		return make([]byte, maxBufferBytes)
+	},
+}
+
+const DefaultMaxInMemoryMultipartSize int64 = 10 << 20 // 10MB
+var MaxInMemoryMultipartSize = DefaultMaxInMemoryMultipartSize
+
+const DefaultLimitedSize int64 = 5 << 20 // 5MB
 
 func ParseHTTPRequest[T any](req *http.Request) (*T, error) {
+	return ParseHTTPRequestWithLimitedSize[T](req, DefaultLimitedSize)
+}
+
+func ParseHTTPRequestWithLimitedSize[T any](req *http.Request, limitedSize int64) (*T, error) {
+	req.Body = http.MaxBytesReader(nil, req.Body, limitedSize)
+
 	var t T
 
 	if err := parseURLParameter(&t, req); err != nil {
-		return nil, fmt.Errorf("%w%s", ErrHTTPBadRequest, err.Error())
+		return nil, translateError(err, limitedSize)
 	}
 
 	if err := parseURLQuery(&t, req); err != nil {
-		return nil, fmt.Errorf("%w%s", ErrHTTPBadRequest, err.Error())
+		return nil, translateError(err, limitedSize)
 	}
 
 	switch req.Method {
@@ -32,21 +56,47 @@ func ParseHTTPRequest[T any](req *http.Request) (*T, error) {
 
 	case http.MethodPost, http.MethodPut, http.MethodDelete:
 		contentType := req.Header.Get("Content-Type")
-		switch contentType {
-		case ContentTypeApplicationJSON:
+
+		switch {
+		case contentType == mime.ApplicationJSON:
 			if err := parseJSONBody(&t, req); err != nil {
-				return nil, fmt.Errorf("%w%s", ErrHTTPBadRequest, err.Error())
+				return nil, translateError(err, limitedSize)
 			}
 			return &t, nil
 
-		case ContentTypeXWWWFormUrlEncoded:
+		case contentType == mime.ApplicationFormURLEncoded:
 			if err := parseURLEncodedFormData(&t, req); err != nil {
-				return nil, fmt.Errorf("%w%s", ErrHTTPBadRequest, err.Error())
+				return nil, translateError(err, limitedSize)
+			}
+
+			return &t, nil
+
+		case strings.HasPrefix(contentType, mime.MultipartFormData):
+			usingReader := false
+			if freq, ok := (any)(&t).(FormDataRequest); ok {
+				if freq.NumFiles() == 1 {
+					usingReader = true
+				}
+			}
+
+			var err error
+			if usingReader {
+				err = parseMultipartFormdataReader(&t, req)
+			} else {
+				err = parseMultipartFormData(&t, req)
+			}
+
+			if err != nil {
+				return nil, translateError(err, limitedSize)
 			}
 
 			return &t, nil
 
 		default:
+			if contentType == "" {
+				contentType = "<empty>"
+			}
+
 			return nil, fmt.Errorf("%wnot support content type %s", ErrHTTPBadRequest, contentType)
 		}
 
@@ -79,6 +129,7 @@ func parseJSONBody(obj any, req *http.Request) error {
 	}
 
 	return parse(obj, req, true, "json", func(r *http.Request, s string) any {
+		s, _, _ = strings.Cut(s, ",")
 		return m[s]
 	})
 }
@@ -97,8 +148,136 @@ func parseURLEncodedFormData(obj any, req *http.Request) error {
 	})
 }
 
+func parseMultipartFormData(obj any, req *http.Request) error {
+	if err := req.ParseMultipartForm(MaxInMemoryMultipartSize); err != nil {
+		return err
+	}
+
+	files := map[string]multipart.File{}
+	headers := map[string]*multipart.FileHeader{}
+
+	return parse(obj, req, false, "multipart", func(r *http.Request, s string) any {
+		key, tag, _ := strings.Cut(s, ",")
+		if tag != "" {
+			if _, ok := files[key]; !ok {
+				file, header, err := r.FormFile(key)
+				if err != nil {
+					if !errors.Is(err, http.ErrMissingFile) {
+						slog.Warn("failed-to-part-form-file", "source", "xhttp/request.go", "err", err)
+					}
+
+					return nil
+				}
+
+				files[key] = file
+				headers[key] = header
+			}
+
+			switch tag {
+			case "file":
+				return files[key]
+			case "filesize":
+				return headers[key].Size
+			case "filesniff":
+				return NewSniffReadSeekCloser(files[key])
+			default:
+				return fmt.Errorf("invalid file tag %s", tag)
+			}
+		}
+
+		return strings.Join(r.PostForm[key], " ")
+	})
+}
+
+func parseMultipartFormdataReader(obj any, req *http.Request) error {
+	mreader, err := req.MultipartReader()
+	if err != nil {
+		return err
+	}
+
+	var file *multipart.Part
+	values := map[string]string{}
+	for {
+		part, err := mreader.NextPart()
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			return err
+		}
+
+		key := part.FormName()
+		if part.FileName() != "" {
+			file = part
+			break
+		} else {
+			err := func() error {
+				p := bufferPool.Get().([]byte)
+				defer bufferPool.Put(p)
+
+				for {
+					n, err := part.Read(p)
+					if n > 0 {
+						values[key] += string(p[:n])
+					}
+
+					if err == io.EOF {
+						break
+					}
+
+					if err != nil {
+						return err
+					}
+				}
+
+				return nil
+			}()
+
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return parse(obj, req, false, "multipart", func(r *http.Request, s string) any {
+		key, tag, _ := strings.Cut(s, ",")
+		if tag != "" {
+			if file == nil {
+				return nil
+			}
+
+			switch tag {
+			case "file":
+				return file
+			case "filesize":
+				return -1
+			case "filesniff":
+				return NewSniffReadCloser(file)
+			default:
+				return fmt.Errorf("invalid file tag %s", tag)
+			}
+		}
+
+		return values[key]
+	})
+}
+
 func parse(obj any, req *http.Request, strict bool, tagName string, fieldVal func(*http.Request, string) any) error {
 	return xreflect.Parse(obj, strict, tagName, func(s string) any {
 		return fieldVal(req, s)
 	})
+}
+
+func translateError(err error, limitedSize int64) error {
+	var maxerr *http.MaxBytesError
+	if errors.As(err, &maxerr) {
+		return fmt.Errorf("%wtoo large request (limit %d bytes)", ErrHTTPTooLarge, limitedSize)
+	}
+
+	if errors.Is(err, xreflect.ErrBadFormat) {
+		return fmt.Errorf("%w%s", ErrHTTPBadRequest, err.Error())
+	}
+
+	return err
 }
