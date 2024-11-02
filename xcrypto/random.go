@@ -7,6 +7,10 @@ import (
 	"unsafe"
 )
 
+func RandToken() string {
+	return RandString(128)
+}
+
 // Source: https://stackoverflow.com/questions/22892120/how-to-generate-a-random-string-of-a-fixed-length-in-go
 
 const letterBytes = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
