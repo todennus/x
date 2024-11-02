@@ -7,8 +7,10 @@ import (
 	"unsafe"
 )
 
+var TokenLength = 64
+
 func RandToken() string {
-	return RandString(128)
+	return RandString(TokenLength)
 }
 
 // Source: https://stackoverflow.com/questions/22892120/how-to-generate-a-random-string-of-a-fixed-length-in-go
