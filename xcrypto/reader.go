@@ -1,10 +1,46 @@
 package xcrypto
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"hash"
 	"io"
+
+	"github.com/todennus/x/xbytes"
 )
+
+func Sha256(reader io.Reader) (string, error) {
+	return Hash(sha256.New(), reader)
+}
+
+func Hash(hasher hash.Hash, reader io.Reader) (string, error) {
+	return HashByChunk(hasher, reader, 32*xbytes.KiB)
+}
+
+func HashByChunk(hasher hash.Hash, content io.Reader, chunk int64) (string, error) {
+	if chunk <= 0 {
+		chunk = 1024
+	}
+
+	buffer := xbytes.GetBytes(chunk)
+	defer xbytes.PutBytes(buffer)
+
+	for {
+		n, err := content.Read(buffer)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return "", err
+		}
+
+		hasher.Write(buffer[:n])
+
+		if err == io.EOF {
+			break
+		}
+	}
+
+	return base64.RawURLEncoding.EncodeToString(hasher.Sum(nil)), nil
+}
 
 var _ io.Reader = (*HashReader)(nil)
 

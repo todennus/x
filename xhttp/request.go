@@ -9,10 +9,10 @@ import (
 	"mime/multipart"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/todennus/x/mime"
+	"github.com/todennus/x/xbytes"
 	"github.com/todennus/x/xreflect"
 )
 
@@ -22,32 +22,27 @@ type FormDataRequest interface {
 
 const maxBufferBytes = 512
 
-var bufferPool = sync.Pool{
-	New: func() any {
-		return make([]byte, maxBufferBytes)
-	},
-}
-
-const DefaultMaxInMemoryMultipartSize int64 = 10 << 20 // 10MB
+const DefaultMaxInMemoryMultipartSize = 10 * xbytes.MiB // 10MiB
 var MaxInMemoryMultipartSize = DefaultMaxInMemoryMultipartSize
-
-const DefaultLimitedSize int64 = 5 << 20 // 5MB
+var DiscardMemory = 512 * xbytes.KiB
 
 func ParseHTTPRequest[T any](req *http.Request) (*T, error) {
-	return ParseHTTPRequestWithLimitedSize[T](req, DefaultLimitedSize)
+	return ParseHTTPRequestWithLimitedSize[T](req, -1)
 }
 
 func ParseHTTPRequestWithLimitedSize[T any](req *http.Request, limitedSize int64) (*T, error) {
-	req.Body = http.MaxBytesReader(nil, req.Body, limitedSize)
+	if limitedSize > 0 {
+		req.Body = http.MaxBytesReader(nil, req.Body, limitedSize)
+	}
 
 	var t T
 
 	if err := parseURLParameter(&t, req); err != nil {
-		return nil, translateError(err, limitedSize)
+		return nil, translateError(err)
 	}
 
 	if err := parseURLQuery(&t, req); err != nil {
-		return nil, translateError(err, limitedSize)
+		return nil, translateError(err)
 	}
 
 	switch req.Method {
@@ -60,13 +55,13 @@ func ParseHTTPRequestWithLimitedSize[T any](req *http.Request, limitedSize int64
 		switch {
 		case contentType == mime.ApplicationJSON:
 			if err := parseJSONBody(&t, req); err != nil {
-				return nil, translateError(err, limitedSize)
+				return nil, translateError(err)
 			}
 			return &t, nil
 
 		case contentType == mime.ApplicationFormURLEncoded:
 			if err := parseURLEncodedFormData(&t, req); err != nil {
-				return nil, translateError(err, limitedSize)
+				return nil, translateError(err)
 			}
 
 			return &t, nil
@@ -87,7 +82,7 @@ func ParseHTTPRequestWithLimitedSize[T any](req *http.Request, limitedSize int64
 			}
 
 			if err != nil {
-				return nil, translateError(err, limitedSize)
+				return nil, translateError(err)
 			}
 
 			return &t, nil
@@ -158,7 +153,7 @@ func parseMultipartFormData(obj any, req *http.Request) error {
 
 	return parse(obj, req, false, "multipart", func(r *http.Request, s string) any {
 		key, tag, _ := strings.Cut(s, ",")
-		if tag != "" {
+		if tag == "file" {
 			if _, ok := files[key]; !ok {
 				file, header, err := r.FormFile(key)
 				if err != nil {
@@ -173,16 +168,7 @@ func parseMultipartFormData(obj any, req *http.Request) error {
 				headers[key] = header
 			}
 
-			switch tag {
-			case "file":
-				return files[key]
-			case "filesize":
-				return headers[key].Size
-			case "filesniff":
-				return NewSniffReadSeekCloser(files[key])
-			default:
-				return fmt.Errorf("invalid file tag %s", tag)
-			}
+			return NewFileFromMultipartFile(files[key], headers[key])
 		}
 
 		return strings.Join(r.PostForm[key], " ")
@@ -213,13 +199,13 @@ func parseMultipartFormdataReader(obj any, req *http.Request) error {
 			break
 		} else {
 			err := func() error {
-				p := bufferPool.Get().([]byte)
-				defer bufferPool.Put(p)
+				buf := xbytes.GetBytes(maxBufferBytes)
+				defer xbytes.PutBytes(buf)
 
 				for {
-					n, err := part.Read(p)
+					n, err := part.Read(buf)
 					if n > 0 {
-						values[key] += string(p[:n])
+						values[key] += string(buf[:n])
 					}
 
 					if err == io.EOF {
@@ -242,21 +228,12 @@ func parseMultipartFormdataReader(obj any, req *http.Request) error {
 
 	return parse(obj, req, false, "multipart", func(r *http.Request, s string) any {
 		key, tag, _ := strings.Cut(s, ",")
-		if tag != "" {
+		if tag == "file" {
 			if file == nil {
 				return nil
 			}
 
-			switch tag {
-			case "file":
-				return file
-			case "filesize":
-				return -1
-			case "filesniff":
-				return NewSniffReadCloser(file)
-			default:
-				return fmt.Errorf("invalid file tag %s", tag)
-			}
+			return NewFile(NewSniffReadCloser(file), r)
 		}
 
 		return values[key]
@@ -269,10 +246,9 @@ func parse(obj any, req *http.Request, strict bool, tagName string, fieldVal fun
 	})
 }
 
-func translateError(err error, limitedSize int64) error {
-	var maxerr *http.MaxBytesError
-	if errors.As(err, &maxerr) {
-		return fmt.Errorf("%wtoo large request (limit %d bytes)", ErrHTTPTooLarge, limitedSize)
+func translateError(err error) error {
+	if mberr := AsMaxBytesError(err); mberr != nil {
+		return fmt.Errorf("%wtoo large request (limit %d bytes)", ErrHTTPTooLarge, mberr.Limit)
 	}
 
 	if errors.Is(err, xreflect.ErrBadFormat) {
