@@ -2,9 +2,6 @@ package xhttp
 
 import (
 	"io"
-	"net/http"
-
-	"github.com/todennus/x/mime"
 )
 
 type Sniffer interface {
@@ -17,42 +14,12 @@ type SniffReadCloser interface {
 	Sniffer
 }
 
-// DetectContentType uses http.DetectContentType for a Sniffer instead.
-func DetectContentType(r Sniffer, n int) string {
-	p := make([]byte, n)
-	_, err := r.Sniff(p)
-	if err != nil && err != io.EOF {
-		return mime.ApplicationOctetStream
-	}
-
-	return http.DetectContentType(p)
-}
-
-type sniffReadSeekCloser struct {
-	io.ReadSeekCloser
-}
-
-func (r *sniffReadSeekCloser) Sniff(p []byte) (int, error) {
-	defer r.ReadSeekCloser.Seek(0, io.SeekStart)
-
-	n, err := r.ReadSeekCloser.Read(p)
-	if err != nil {
-		return n, err
-	}
-
-	return n, nil
-}
-
-func NewSniffReadSeekCloser(r io.ReadSeekCloser) SniffReadCloser {
-	return &sniffReadSeekCloser{ReadSeekCloser: r}
-}
-
 type sniffReadCloser struct {
 	sniff []byte
 	inner io.ReadCloser
 }
 
-func NewSniffReadCloser(r io.ReadCloser) SniffReadCloser {
+func NewSniffReadCloser(r io.ReadCloser) *sniffReadCloser {
 	if r == nil {
 		return nil
 	}

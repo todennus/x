@@ -9,7 +9,17 @@ const (
 	MultipartFormData         = "multipart/form-data"
 )
 
-var IsImage = map[string]bool{
+var imageMimeType = map[string]bool{
 	ImageJPEG: true,
 	ImagePNG:  true,
+}
+
+func IsImage(t ...string) bool {
+	for i := range t {
+		if !imageMimeType[t[i]] {
+			return false
+		}
+	}
+
+	return true
 }
